@@ -6,10 +6,12 @@
 
 #include "src/api-arguments-inl.h"
 #include "src/elements.h"
-#include "src/factory.h"
+#include "src/heap/factory.h"
 #include "src/identity-map.h"
 #include "src/isolate-inl.h"
 #include "src/objects-inl.h"
+#include "src/objects/api-callbacks.h"
+#include "src/objects/hash-table-inl.h"
 #include "src/property-descriptor.h"
 #include "src/prototype.h"
 
@@ -133,9 +135,7 @@ MaybeHandle<FixedArray> FilterProxyKeys(KeyAccumulator* accumulator,
     }
     store_position++;
   }
-  if (store_position == 0) return isolate->factory()->empty_fixed_array();
-  keys->Shrink(store_position);
-  return keys;
+  return FixedArray::ShrinkOrEmpty(keys, store_position);
 }
 
 // Returns "nothing" in case of exception, "true" on success.
@@ -373,10 +373,6 @@ MaybeHandle<FixedArray> GetOwnKeysWithElements(Isolate* isolate,
   return result;
 }
 
-bool OnlyHasSimpleProperties(Map* map) {
-  return map->instance_type() > LAST_CUSTOM_ELEMENTS_RECEIVER;
-}
-
 }  // namespace
 
 MaybeHandle<FixedArray> FastKeyAccumulator::GetKeys(
@@ -396,7 +392,7 @@ MaybeHandle<FixedArray> FastKeyAccumulator::GetKeysFast(
     GetKeysConversion keys_conversion) {
   bool own_only = has_empty_prototype_ || mode_ == KeyCollectionMode::kOwnOnly;
   Map* map = receiver_->map();
-  if (!own_only || !OnlyHasSimpleProperties(map)) {
+  if (!own_only || map->IsCustomElementsReceiverMap()) {
     return MaybeHandle<FixedArray>();
   }
 
@@ -659,6 +655,16 @@ Maybe<bool> KeyAccumulator::CollectOwnPropertyNames(Handle<JSReceiver> receiver,
     } else {
       enum_keys = GetOwnEnumPropertyDictionaryKeys(
           isolate_, mode_, this, object, object->property_dictionary());
+    }
+    if (object->IsJSModuleNamespace()) {
+      // Simulate [[GetOwnProperty]] for establishing enumerability, which
+      // throws for uninitialized exports.
+      for (int i = 0, n = enum_keys->length(); i < n; ++i) {
+        Handle<String> key(String::cast(enum_keys->get(i)), isolate_);
+        if (Handle<JSModuleNamespace>::cast(object)->GetExport(key).is_null()) {
+          return Nothing<bool>();
+        }
+      }
     }
     AddKeys(enum_keys, DO_NOT_CONVERT);
   } else {

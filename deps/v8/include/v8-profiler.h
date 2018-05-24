@@ -54,7 +54,11 @@ namespace v8 {
  */
 class V8_EXPORT TracingCpuProfiler {
  public:
-  static std::unique_ptr<TracingCpuProfiler> Create(Isolate*);
+  V8_DEPRECATE_SOON(
+      "The profiler is created automatically with the isolate.\n"
+      "No need to create it explicitly.",
+      static std::unique_ptr<TracingCpuProfiler> Create(Isolate*));
+
   virtual ~TracingCpuProfiler() = default;
 
  protected:
@@ -273,6 +277,16 @@ class V8_EXPORT CpuProfile {
   void Delete();
 };
 
+enum CpuProfilingMode {
+  // In the resulting CpuProfile tree, intermediate nodes in a stack trace
+  // (from the root to a leaf) will have line numbers that point to the start
+  // line of the function, rather than the line of the callsite of the child.
+  kLeafNodeLineNumbers,
+  // In the resulting CpuProfile tree, nodes are separated based on the line
+  // number of their callsite in their parent.
+  kCallerLineNumbers,
+};
+
 /**
  * Interface for controlling CPU profiling. Instance of the
  * profiler can be created using v8::CpuProfiler::New method.
@@ -316,6 +330,13 @@ class V8_EXPORT CpuProfiler {
    * |record_samples| parameter controls whether individual samples should
    * be recorded in addition to the aggregated tree.
    */
+  void StartProfiling(Local<String> title, CpuProfilingMode mode,
+                      bool record_samples = false);
+  /**
+   * The same as StartProfiling above, but the CpuProfilingMode defaults to
+   * kLeafNodeLineNumbers mode, which was the previous default behavior of the
+   * profiler.
+   */
   void StartProfiling(Local<String> title, bool record_samples = false);
 
   /**
@@ -335,7 +356,8 @@ class V8_EXPORT CpuProfiler {
   /**
    * Tells the profiler whether the embedder is idle.
    */
-  void SetIdle(bool is_idle);
+  V8_DEPRECATED("Use Isolate::SetIdle(bool) instead.",
+                void SetIdle(bool is_idle));
 
  private:
   CpuProfiler();
@@ -401,7 +423,8 @@ class V8_EXPORT HeapGraphNode {
                          // snapshot items together.
     kConsString = 10,    // Concatenated string. A pair of pointers to strings.
     kSlicedString = 11,  // Sliced string. A fragment of another string.
-    kSymbol = 12         // A Symbol (ES6).
+    kSymbol = 12,        // A Symbol (ES6).
+    kBigInt = 13         // BigInt.
   };
 
   /** Returns node type (see HeapGraphNode::Type). */
@@ -875,11 +898,15 @@ class V8_EXPORT HeapProfiler {
   void DeleteAllHeapSnapshots();
 
   /** Binds a callback to embedder's class ID. */
-  void SetWrapperClassInfoProvider(
-      uint16_t class_id,
-      WrapperInfoCallback callback);
+  V8_DEPRECATED(
+      "Use SetBuildEmbedderGraphCallback to provide info about embedder nodes",
+      void SetWrapperClassInfoProvider(uint16_t class_id,
+                                       WrapperInfoCallback callback));
 
-  void SetGetRetainerInfosCallback(GetRetainerInfosCallback callback);
+  V8_DEPRECATED(
+      "Use SetBuildEmbedderGraphCallback to provide info about embedder nodes",
+      void SetGetRetainerInfosCallback(GetRetainerInfosCallback callback));
+
   void SetBuildEmbedderGraphCallback(BuildEmbedderGraphCallback callback);
 
   /**

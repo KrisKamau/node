@@ -54,7 +54,7 @@ struct ValueMatcher : public NodeMatcher {
   explicit ValueMatcher(Node* node)
       : NodeMatcher(node), value_(), has_value_(opcode() == kOpcode) {
     if (has_value_) {
-      value_ = OpParameter<T>(node);
+      value_ = OpParameter<T>(node->op());
     }
   }
 
@@ -77,7 +77,7 @@ inline ValueMatcher<uint32_t, IrOpcode::kInt32Constant>::ValueMatcher(
       value_(),
       has_value_(opcode() == IrOpcode::kInt32Constant) {
   if (has_value_) {
-    value_ = static_cast<uint32_t>(OpParameter<int32_t>(node));
+    value_ = static_cast<uint32_t>(OpParameter<int32_t>(node->op()));
   }
 }
 
@@ -86,10 +86,10 @@ template <>
 inline ValueMatcher<int64_t, IrOpcode::kInt64Constant>::ValueMatcher(Node* node)
     : NodeMatcher(node), value_(), has_value_(false) {
   if (opcode() == IrOpcode::kInt32Constant) {
-    value_ = OpParameter<int32_t>(node);
+    value_ = OpParameter<int32_t>(node->op());
     has_value_ = true;
   } else if (opcode() == IrOpcode::kInt64Constant) {
-    value_ = OpParameter<int64_t>(node);
+    value_ = OpParameter<int64_t>(node->op());
     has_value_ = true;
   }
 }
@@ -100,10 +100,10 @@ inline ValueMatcher<uint64_t, IrOpcode::kInt64Constant>::ValueMatcher(
     Node* node)
     : NodeMatcher(node), value_(), has_value_(false) {
   if (opcode() == IrOpcode::kInt32Constant) {
-    value_ = static_cast<uint32_t>(OpParameter<int32_t>(node));
+    value_ = static_cast<uint32_t>(OpParameter<int32_t>(node->op()));
     has_value_ = true;
   } else if (opcode() == IrOpcode::kInt64Constant) {
-    value_ = static_cast<uint64_t>(OpParameter<int64_t>(node));
+    value_ = static_cast<uint64_t>(OpParameter<int64_t>(node->op()));
     has_value_ = true;
   }
 }
@@ -491,14 +491,14 @@ struct BaseWithIndexAndDisplacementMatcher {
     bool power_of_two_plus_one = false;
     DisplacementMode displacement_mode = kPositiveDisplacement;
     int scale = 0;
-    if (m.HasIndexInput() && left->OwnedByAddressingOperand()) {
+    if (m.HasIndexInput() && OwnedByAddressingOperand(left)) {
       index = m.IndexInput();
       scale = m.scale();
       scale_expression = left;
       power_of_two_plus_one = m.power_of_two_plus_one();
       bool match_found = false;
       if (right->opcode() == AddMatcher::kSubOpcode &&
-          right->OwnedByAddressingOperand()) {
+          OwnedByAddressingOperand(right)) {
         AddMatcher right_matcher(right);
         if (right_matcher.right().HasValue()) {
           // (S + (B - D))
@@ -510,7 +510,7 @@ struct BaseWithIndexAndDisplacementMatcher {
       }
       if (!match_found) {
         if (right->opcode() == AddMatcher::kAddOpcode &&
-            right->OwnedByAddressingOperand()) {
+            OwnedByAddressingOperand(right)) {
           AddMatcher right_matcher(right);
           if (right_matcher.right().HasValue()) {
             // (S + (B + D))
@@ -531,7 +531,7 @@ struct BaseWithIndexAndDisplacementMatcher {
     } else {
       bool match_found = false;
       if (left->opcode() == AddMatcher::kSubOpcode &&
-          left->OwnedByAddressingOperand()) {
+          OwnedByAddressingOperand(left)) {
         AddMatcher left_matcher(left);
         Node* left_left = left_matcher.left().node();
         Node* left_right = left_matcher.right().node();
@@ -557,7 +557,7 @@ struct BaseWithIndexAndDisplacementMatcher {
       }
       if (!match_found) {
         if (left->opcode() == AddMatcher::kAddOpcode &&
-            left->OwnedByAddressingOperand()) {
+            OwnedByAddressingOperand(left)) {
           AddMatcher left_matcher(left);
           Node* left_left = left_matcher.left().node();
           Node* left_right = left_matcher.right().node();
@@ -629,11 +629,11 @@ struct BaseWithIndexAndDisplacementMatcher {
     if (displacement != nullptr) {
       switch (displacement->opcode()) {
         case IrOpcode::kInt32Constant: {
-          value = OpParameter<int32_t>(displacement);
+          value = OpParameter<int32_t>(displacement->op());
           break;
         }
         case IrOpcode::kInt64Constant: {
-          value = OpParameter<int64_t>(displacement);
+          value = OpParameter<int64_t>(displacement->op());
           break;
         }
         default:
@@ -666,6 +666,29 @@ struct BaseWithIndexAndDisplacementMatcher {
     index_ = index;
     scale_ = scale;
     matches_ = true;
+  }
+
+  static bool OwnedByAddressingOperand(Node* node) {
+    for (auto use : node->use_edges()) {
+      Node* from = use.from();
+      switch (from->opcode()) {
+        case IrOpcode::kLoad:
+        case IrOpcode::kPoisonedLoad:
+        case IrOpcode::kInt32Add:
+        case IrOpcode::kInt64Add:
+          // Skip addressing uses.
+          break;
+        case IrOpcode::kStore:
+          // If the stored value is this node, it is not an addressing use.
+          if (from->InputAt(2) == node) return false;
+          // Otherwise it is used as an address and skipped.
+          break;
+        default:
+          // Non-addressing use found.
+          return false;
+      }
+    }
+    return true;
   }
 };
 

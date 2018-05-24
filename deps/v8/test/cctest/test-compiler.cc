@@ -33,7 +33,7 @@
 #include "src/api.h"
 #include "src/compiler.h"
 #include "src/disasm.h"
-#include "src/factory.h"
+#include "src/heap/factory.h"
 #include "src/interpreter/interpreter.h"
 #include "src/objects-inl.h"
 #include "test/cctest/cctest.h"
@@ -312,9 +312,12 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   Handle<FeedbackVector> feedback_vector(f->feedback_vector());
   CHECK(!feedback_vector->is_empty());
   FeedbackSlot slot_for_a(0);
-  Object* object = feedback_vector->Get(slot_for_a);
-  CHECK(object->IsWeakCell() &&
-        WeakCell::cast(object)->value()->IsJSFunction());
+  MaybeObject* object = feedback_vector->Get(slot_for_a);
+  {
+    HeapObject* heap_object;
+    CHECK(object->ToWeakHeapObject(&heap_object));
+    CHECK(heap_object->IsJSFunction());
+  }
 
   CompileRun("%OptimizeFunctionOnNextCall(f); f(fun1);");
 
@@ -322,8 +325,11 @@ TEST(FeedbackVectorPreservedAcrossRecompiles) {
   // of the full code.
   CHECK(f->IsOptimized());
   object = f->feedback_vector()->Get(slot_for_a);
-  CHECK(object->IsWeakCell() &&
-        WeakCell::cast(object)->value()->IsJSFunction());
+  {
+    HeapObject* heap_object;
+    CHECK(object->ToWeakHeapObject(&heap_object));
+    CHECK(heap_object->IsJSFunction());
+  }
 }
 
 
@@ -784,6 +790,58 @@ TEST(InvocationCount) {
   CHECK_EQ(2, foo->feedback_vector()->invocation_count());
   CompileRun("foo(); foo()");
   CHECK_EQ(4, foo->feedback_vector()->invocation_count());
+}
+
+TEST(ShallowEagerCompilation) {
+  i::FLAG_always_opt = false;
+  CcTest::InitializeVM();
+  LocalContext env;
+  i::Isolate* isolate = CcTest::i_isolate();
+  v8::HandleScope scope(CcTest::isolate());
+  v8::Local<v8::String> source = v8_str(
+      "function f(x) {"
+      "  return x + x;"
+      "}"
+      "f(2)");
+  v8::ScriptCompiler::Source script_source(source);
+  v8::Local<v8::Script> script =
+      v8::ScriptCompiler::Compile(env.local(), &script_source,
+                                  v8::ScriptCompiler::kEagerCompile)
+          .ToLocalChecked();
+  {
+    v8::internal::DisallowCompilation no_compile_expected(isolate);
+    v8::Local<v8::Value> result = script->Run(env.local()).ToLocalChecked();
+    CHECK_EQ(4, result->Int32Value(env.local()).FromJust());
+  }
+}
+
+TEST(DeepEagerCompilation) {
+  i::FLAG_always_opt = false;
+  CcTest::InitializeVM();
+  LocalContext env;
+  i::Isolate* isolate = CcTest::i_isolate();
+  v8::HandleScope scope(CcTest::isolate());
+  v8::Local<v8::String> source = v8_str(
+      "function f(x) {"
+      "  function g(x) {"
+      "    function h(x) {"
+      "      return x ** x;"
+      "    }"
+      "    return h(x) * h(x);"
+      "  }"
+      "  return g(x) + g(x);"
+      "}"
+      "f(2)");
+  v8::ScriptCompiler::Source script_source(source);
+  v8::Local<v8::Script> script =
+      v8::ScriptCompiler::Compile(env.local(), &script_source,
+                                  v8::ScriptCompiler::kEagerCompile)
+          .ToLocalChecked();
+  {
+    v8::internal::DisallowCompilation no_compile_expected(isolate);
+    v8::Local<v8::Value> result = script->Run(env.local()).ToLocalChecked();
+    CHECK_EQ(32, result->Int32Value(env.local()).FromJust());
+  }
 }
 
 }  // namespace internal
